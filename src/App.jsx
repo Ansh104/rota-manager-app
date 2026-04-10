@@ -32,7 +32,7 @@ function formatDateInputValue(date) {
 function getNextMonday(fromDate) {
   const date = new Date(fromDate);
   date.setHours(0, 0, 0, 0);
-  const day = date.getDay(); // Sun=0, Mon=1
+  const day = date.getDay();
   const daysUntilMonday = day === 1 ? 7 : (8 - day) % 7;
   date.setDate(date.getDate() + daysUntilMonday);
   return date;
@@ -75,18 +75,12 @@ function buildWeek({
       off = people.filter((p) => p !== saturdayPerson);
     }
 
-    if (override.workingText !== undefined) {
-      working = override.workingText
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean);
+    if (override.working && override.working.length) {
+      working = override.working;
     }
 
-    if (override.offText !== undefined) {
-      off = override.offText
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean);
+    if (override.off && override.off.length) {
+      off = override.off;
     }
 
     return {
@@ -108,6 +102,10 @@ function buildWeek({
     monthlyLead: monthDutyPerson,
     days,
   };
+}
+
+function getSelectedValues(event) {
+  return Array.from(event.target.selectedOptions).map((option) => option.value);
 }
 
 export default function App() {
@@ -203,6 +201,15 @@ export default function App() {
         saturdayPerson: week.saturdayPerson === name ? (updated[0] || '') : week.saturdayPerson,
         previousWeekSaturdayPerson:
           week.previousWeekSaturdayPerson === name ? '' : week.previousWeekSaturdayPerson,
+        overrides: Object.fromEntries(
+          Object.entries(week.overrides || {}).map(([day, value]) => [
+            day,
+            {
+              working: (value.working || []).filter((p) => p !== name),
+              off: (value.off || []).filter((p) => p !== name),
+            },
+          ])
+        ),
       }))
     );
   }
@@ -217,7 +224,11 @@ export default function App() {
 
       return prev.map((week, idx) => {
         const saturdayPerson = people[(firstIdx + idx) % people.length];
-        const previousWeekSaturdayPerson = idx === 0 ? prev[0].previousWeekSaturdayPerson : people[(firstIdx + idx - 1 + people.length) % people.length];
+        const previousWeekSaturdayPerson =
+          idx === 0
+            ? prev[0].previousWeekSaturdayPerson
+            : people[(firstIdx + idx - 1 + people.length) % people.length];
+
         return {
           ...week,
           saturdayPerson,
@@ -284,7 +295,7 @@ export default function App() {
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         <h1 style={{ marginBottom: '8px' }}>Rota Manager</h1>
         <p style={{ color: '#475569', marginBottom: '20px' }}>
-          5 weeks rota with real dates, week selection, previous-week Saturday tracking, Monday off logic, manual overrides, and Excel download.
+          5 weeks rota with real dates, week selection, previous-week Saturday tracking, Monday off logic, person selectors, and Excel download.
         </p>
 
         <div style={{ ...cardStyle, marginBottom: '20px' }}>
@@ -411,7 +422,7 @@ export default function App() {
                       <th style={thStyle}>Date</th>
                       <th style={thStyle}>Working</th>
                       <th style={thStyle}>Off</th>
-                      <th style={thStyle}>Override</th>
+                      <th style={thStyle}>Override Selectors</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -424,23 +435,39 @@ export default function App() {
                           <td style={tdStyle}>{day.working.join(', ') || 'Nobody'}</td>
                           <td style={tdStyle}>{day.off.join(', ') || 'Nobody'}</td>
                           <td style={tdStyle}>
-                            <div style={{ display: 'grid', gap: '8px', minWidth: '260px' }}>
-                              <input
-                                style={smallInputStyle}
-                                placeholder="Working override, comma separated"
-                                value={override.workingText || ''}
-                                onChange={(e) =>
-                                  updateDayOverride(selectedWeek, day.dayName, 'workingText', e.target.value)
-                                }
-                              />
-                              <input
-                                style={smallInputStyle}
-                                placeholder="Off override, comma separated"
-                                value={override.offText || ''}
-                                onChange={(e) =>
-                                  updateDayOverride(selectedWeek, day.dayName, 'offText', e.target.value)
-                                }
-                              />
+                            <div style={{ display: 'grid', gap: '10px', minWidth: '280px' }}>
+                              <div>
+                                <div style={miniLabelStyle}>Working people</div>
+                                <select
+                                  multiple
+                                  value={override.working || []}
+                                  onChange={(e) =>
+                                    updateDayOverride(selectedWeek, day.dayName, 'working', getSelectedValues(e))
+                                  }
+                                  style={multiSelectStyle}
+                                >
+                                  {people.map((person) => (
+                                    <option key={person} value={person}>{person}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <div style={miniLabelStyle}>Off people</div>
+                                <select
+                                  multiple
+                                  value={override.off || []}
+                                  onChange={(e) =>
+                                    updateDayOverride(selectedWeek, day.dayName, 'off', getSelectedValues(e))
+                                  }
+                                  style={multiSelectStyle}
+                                >
+                                  {people.map((person) => (
+                                    <option key={person} value={person}>{person}</option>
+                                  ))}
+                                </select>
+                              </div>
+
                               <button
                                 style={buttonSecondary}
                                 onClick={() => clearDayOverride(selectedWeek, day.dayName)}
@@ -512,12 +539,12 @@ const inputStyle = {
   background: '#fff'
 };
 
-const smallInputStyle = {
+const multiSelectStyle = {
   width: '100%',
+  minHeight: '110px',
   padding: '8px',
   borderRadius: '8px',
   border: '1px solid #cbd5e1',
-  boxSizing: 'border-box',
   background: '#fff'
 };
 
@@ -526,6 +553,12 @@ const labelStyle = {
   fontSize: '14px',
   color: '#475569',
   marginTop: '8px'
+};
+
+const miniLabelStyle = {
+  fontSize: '12px',
+  color: '#475569',
+  marginBottom: '6px'
 };
 
 const buttonStyle = {
