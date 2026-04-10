@@ -26,46 +26,65 @@ function formatDate(date) {
   });
 }
 
-function formatDateInputValue(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function getNextMonday(fromDate) {
-  const date = new Date(fromDate);
-  date.setHours(0, 0, 0, 0);
-  const day = date.getDay(); // Sun=0, Mon=1
-  const daysUntilMonday = day === 1 ? 7 : (8 - day) % 7;
-  date.setDate(date.getDate() + daysUntilMonday);
-  return date;
-}
-
 function addDays(date, days) {
   const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() + days);
   return d;
 }
 
-function buildFiveWeekSchedule(startMonday, firstSaturdayPerson, people) {
+function getNextSaturday(fromDate) {
+  const date = new Date(fromDate);
+  date.setHours(0, 0, 0, 0);
+  const day = date.getDay(); // Sun=0, Sat=6
+  const daysUntilSaturday = (6 - day + 7) % 7 || 7;
+  date.setDate(date.getDate() + daysUntilSaturday);
+  return date;
+}
+
+function getMondayOfWeekContaining(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay(); // Sun=0, Mon=1
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function escapeCsvValue(value) {
+  const stringValue = Array.isArray(value) ? value.join(', ') : String(value ?? '');
+  return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+function buildFiveWeekSchedule(firstSaturdayDate, firstSaturdayPerson, people) {
   const weeks = [];
-  let saturdayPerson = firstSaturdayPerson;
 
   for (let weekIndex = 0; weekIndex < 5; weekIndex++) {
-    const weekStart = addDays(startMonday, weekIndex * 7);
-    const mondayOff = saturdayPerson;
-    const monthDutyPerson = getMonthDutyPerson(people, weekStart.getMonth());
+    const saturdayDate = addDays(firstSaturdayDate, weekIndex * 7);
+    const mondayDate = getMondayOfWeekContaining(saturdayDate);
+    const saturdayPerson =
+      weekIndex === 0
+        ? firstSaturdayPerson
+        : getNextInRotation(people, weeks[weekIndex - 1].saturdayPerson);
+
+    const previousWeekSaturdayPerson =
+      weekIndex === 0
+        ? null
+        : weeks[weekIndex - 1].saturdayPerson;
+
+    const monthDutyPerson = getMonthDutyPerson(people, mondayDate.getMonth());
 
     const days = weekdays.map((dayName, dayOffset) => {
-      const currentDate = addDays(weekStart, dayOffset);
+      const currentDate = addDays(mondayDate, dayOffset);
 
       if (dayName === 'Monday') {
         return {
           dayName,
           date: currentDate,
-          working: people.filter((p) => p !== mondayOff),
-          off: [mondayOff],
+          working: previousWeekSaturdayPerson
+            ? people.filter((p) => p !== previousWeekSaturdayPerson)
+            : [...people],
+          off: previousWeekSaturdayPerson ? [previousWeekSaturdayPerson] : [],
           saturdayPerson,
           monthlyLead: monthDutyPerson,
         };
@@ -75,7 +94,7 @@ function buildFiveWeekSchedule(startMonday, firstSaturdayPerson, people) {
         return {
           dayName,
           date: currentDate,
-          working: [saturdayPerson],
+          working: saturdayPerson ? [saturdayPerson] : [],
           off: people.filter((p) => p !== saturdayPerson),
           saturdayPerson,
           monthlyLead: monthDutyPerson,
@@ -95,43 +114,28 @@ function buildFiveWeekSchedule(startMonday, firstSaturdayPerson, people) {
     weeks.push({
       weekNumber: weekIndex + 1,
       label: `Week ${weekIndex + 1}`,
-      startDate: weekStart,
-      endDate: addDays(weekStart, 5),
+      startDate: mondayDate,
+      endDate: addDays(mondayDate, 5),
+      saturdayDate,
       saturdayPerson,
-      mondayOff,
+      mondayOff: previousWeekSaturdayPerson || '',
       monthlyLead: monthDutyPerson,
       days,
     });
-
-    saturdayPerson = getNextInRotation(people, saturdayPerson);
   }
 
   return weeks;
-}
-
-function escapeCsvValue(value) {
-  const stringValue = Array.isArray(value) ? value.join(', ') : String(value ?? '');
-  return `"${stringValue.replace(/"/g, '""')}"`;
 }
 
 export default function App() {
   const [people, setPeople] = useState(defaultPeople);
   const [firstSaturdayPerson, setFirstSaturdayPerson] = useState('Andrii');
   const [newName, setNewName] = useState('');
-  const [startDate, setStartDate] = useState(() => {
-    const nextMonday = getNextMonday(new Date());
-    return formatDateInputValue(nextMonday);
-  });
 
-  const startMonday = useMemo(() => {
-    const parsed = new Date(startDate);
-    parsed.setHours(0, 0, 0, 0);
-    return parsed;
-  }, [startDate]);
-
+  const firstSaturdayDate = useMemo(() => getNextSaturday(new Date()), []);
   const fiveWeeks = useMemo(() => {
-    return buildFiveWeekSchedule(startMonday, firstSaturdayPerson, people);
-  }, [startMonday, firstSaturdayPerson, people]);
+    return buildFiveWeekSchedule(firstSaturdayDate, firstSaturdayPerson, people);
+  }, [firstSaturdayDate, firstSaturdayPerson, people]);
 
   function addPerson() {
     const trimmed = newName.trim();
@@ -149,20 +153,19 @@ export default function App() {
   }
 
   function downloadExcel() {
-    const rows = [
-      [
-        'Week',
-        'Day',
-        'Date',
-        'Month',
-        'Year',
-        'Working',
-        'Off',
-        'Saturday Person',
-        'Monday Off',
-        'Monthly 6-Day Lead'
-      ]
-    ];
+    const rows = [[
+      'Week',
+      'Day',
+      'Date',
+      'Month',
+      'Year',
+      'Working',
+      'Off',
+      'Saturday Person',
+      'Saturday Date',
+      'Monday Off',
+      'Monthly 6-Day Lead'
+    ]];
 
     fiveWeeks.forEach((week) => {
       week.days.forEach((day) => {
@@ -175,6 +178,7 @@ export default function App() {
           day.working.join(', '),
           day.off.join(', '),
           week.saturdayPerson,
+          formatDate(week.saturdayDate),
           week.mondayOff,
           week.monthlyLead
         ]);
@@ -189,7 +193,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `rota_next_5_weeks_${startDate}.csv`;
+    link.download = `rota_next_5_weeks.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -201,19 +205,15 @@ export default function App() {
       <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
         <h1 style={{ marginBottom: '8px' }}>Rota Manager</h1>
         <p style={{ color: '#475569', marginBottom: '20px' }}>
-          Generates the next 5 weeks with real calendar dates. Saturday rotates weekly, and whoever works Saturday gets Monday off.
+          Next 5 weeks rota from the upcoming Saturday. Whoever works Saturday gets the following Monday off.
         </p>
 
         <div style={{ ...cardStyle, marginBottom: '20px' }}>
           <h3 style={{ marginTop: 0 }}>Controls</h3>
 
-          <label style={labelStyle}>Start Monday</label>
-          <input
-            type="date"
-            style={inputStyle}
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-          />
+          <div style={infoBoxStyle}>
+            <div><strong>First Saturday Date:</strong> {formatDate(firstSaturdayDate)}</div>
+          </div>
 
           <label style={labelStyle}>First Saturday assigned to</label>
           <select
@@ -277,8 +277,8 @@ export default function App() {
                 </div>
 
                 <div style={{ color: '#334155' }}>
-                  <div><strong>Saturday:</strong> {week.saturdayPerson}</div>
-                  <div><strong>Monday Off:</strong> {week.mondayOff}</div>
+                  <div><strong>Saturday:</strong> {week.saturdayPerson} ({formatDate(week.saturdayDate)})</div>
+                  <div><strong>Monday Off:</strong> {week.mondayOff || 'None'}</div>
                   <div><strong>Monthly Lead:</strong> {week.monthlyLead}</div>
                 </div>
               </div>
@@ -320,6 +320,15 @@ const cardStyle = {
   border: '1px solid #e2e8f0',
   borderRadius: '16px',
   padding: '16px',
+};
+
+const infoBoxStyle = {
+  marginTop: '12px',
+  padding: '12px',
+  border: '1px solid #cbd5e1',
+  borderRadius: '10px',
+  background: '#fff',
+  marginBottom: '12px'
 };
 
 const inputStyle = {
