@@ -1,1 +1,8 @@
-body{margin:0;background:#f8fafc}
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f8fafc;
+}
+button {
+  cursor: pointer;
+}
