@@ -7,42 +7,106 @@ const monthNames = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+function getNextInRotation(people, current) {
+  const idx = people.indexOf(current);
+  if (idx === -1 || people.length === 0) return people[0] || '';
+  return people[(idx + 1) % people.length];
+}
+
 function getMonthDutyPerson(people, monthIndex) {
   if (!people.length) return '';
   return people[monthIndex % people.length];
 }
 
-function buildWeekSchedule(people, saturdayPerson, monthDutyPerson) {
-  return weekdays.map((day) => {
-    if (day === 'Saturday') {
-      return {
-        day,
-        working: saturdayPerson ? [saturdayPerson] : [],
-        off: people.filter((p) => p !== saturdayPerson),
-      };
-    }
-
-    if (day === 'Monday') {
-      return {
-        day,
-        working: people.filter((p) => p !== saturdayPerson),
-        off: saturdayPerson ? [saturdayPerson] : [],
-      };
-    }
-
-    return {
-      day,
-      working: [...people],
-      off: [],
-      extraDuty: monthDutyPerson,
-    };
+function formatDate(date) {
+  return date.toLocaleDateString('en-IE', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
   });
 }
 
-function getNextInRotation(people, current) {
-  const idx = people.indexOf(current);
-  if (idx === -1 || people.length === 0) return people[0] || '';
-  return people[(idx + 1) % people.length];
+function formatDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getNextMonday(fromDate) {
+  const date = new Date(fromDate);
+  date.setHours(0, 0, 0, 0);
+  const day = date.getDay(); // Sun=0, Mon=1
+  const daysUntilMonday = day === 1 ? 7 : (8 - day) % 7;
+  date.setDate(date.getDate() + daysUntilMonday);
+  return date;
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function buildFiveWeekSchedule(startMonday, firstSaturdayPerson, people) {
+  const weeks = [];
+  let saturdayPerson = firstSaturdayPerson;
+
+  for (let weekIndex = 0; weekIndex < 5; weekIndex++) {
+    const weekStart = addDays(startMonday, weekIndex * 7);
+    const mondayOff = saturdayPerson;
+    const monthDutyPerson = getMonthDutyPerson(people, weekStart.getMonth());
+
+    const days = weekdays.map((dayName, dayOffset) => {
+      const currentDate = addDays(weekStart, dayOffset);
+
+      if (dayName === 'Monday') {
+        return {
+          dayName,
+          date: currentDate,
+          working: people.filter((p) => p !== mondayOff),
+          off: [mondayOff],
+          saturdayPerson,
+          monthlyLead: monthDutyPerson,
+        };
+      }
+
+      if (dayName === 'Saturday') {
+        return {
+          dayName,
+          date: currentDate,
+          working: [saturdayPerson],
+          off: people.filter((p) => p !== saturdayPerson),
+          saturdayPerson,
+          monthlyLead: monthDutyPerson,
+        };
+      }
+
+      return {
+        dayName,
+        date: currentDate,
+        working: [...people],
+        off: [],
+        saturdayPerson,
+        monthlyLead: monthDutyPerson,
+      };
+    });
+
+    weeks.push({
+      weekNumber: weekIndex + 1,
+      label: `Week ${weekIndex + 1}`,
+      startDate: weekStart,
+      endDate: addDays(weekStart, 5),
+      saturdayPerson,
+      mondayOff,
+      monthlyLead: monthDutyPerson,
+      days,
+    });
+
+    saturdayPerson = getNextInRotation(people, saturdayPerson);
+  }
+
+  return weeks;
 }
 
 function escapeCsvValue(value) {
@@ -52,45 +116,22 @@ function escapeCsvValue(value) {
 
 export default function App() {
   const [people, setPeople] = useState(defaultPeople);
-  const [currentSaturday, setCurrentSaturday] = useState('Andrii');
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [weekLabel, setWeekLabel] = useState('Next Week');
+  const [firstSaturdayPerson, setFirstSaturdayPerson] = useState('Andrii');
   const [newName, setNewName] = useState('');
-  const [swapA, setSwapA] = useState('');
-  const [swapB, setSwapB] = useState('');
-  const [history, setHistory] = useState([{ week: 'Next Week', saturday: 'Andrii' }]);
-  const [scheduleOverride, setScheduleOverride] = useState(null);
+  const [startDate, setStartDate] = useState(() => {
+    const nextMonday = getNextMonday(new Date());
+    return formatDateInputValue(nextMonday);
+  });
 
-  const monthDutyPerson = useMemo(
-    () => getMonthDutyPerson(people, selectedMonth),
-    [people, selectedMonth]
-  );
+  const startMonday = useMemo(() => {
+    const parsed = new Date(startDate);
+    parsed.setHours(0, 0, 0, 0);
+    return parsed;
+  }, [startDate]);
 
-  const schedule = useMemo(
-    () => buildWeekSchedule(people, currentSaturday, monthDutyPerson),
-    [people, currentSaturday, monthDutyPerson]
-  );
-
-  const displayedSchedule = scheduleOverride || schedule;
-  const mondayOff = currentSaturday;
-
-  function generateNextWeek() {
-    const next = getNextInRotation(people, currentSaturday);
-    const newWeek = `Week ${history.length + 1}`;
-    setCurrentSaturday(next);
-    setWeekLabel(newWeek);
-    setHistory((prev) => [...prev, { week: newWeek, saturday: next }]);
-    setScheduleOverride(null);
-    setSwapA('');
-    setSwapB('');
-  }
-
-  function resetWeek() {
-    setScheduleOverride(null);
-    setSwapA('');
-    setSwapB('');
-  }
+  const fiveWeeks = useMemo(() => {
+    return buildFiveWeekSchedule(startMonday, firstSaturdayPerson, people);
+  }, [startMonday, firstSaturdayPerson, people]);
 
   function addPerson() {
     const trimmed = newName.trim();
@@ -102,67 +143,53 @@ export default function App() {
   function removePerson(name) {
     const updated = people.filter((p) => p !== name);
     setPeople(updated);
-    if (currentSaturday === name) {
-      setCurrentSaturday(updated[0] || '');
+    if (firstSaturdayPerson === name) {
+      setFirstSaturdayPerson(updated[0] || '');
     }
-    setScheduleOverride(null);
-  }
-
-  function swapPeople() {
-    if (!swapA || !swapB || swapA === swapB) return;
-
-    const clone = JSON.parse(JSON.stringify(displayedSchedule));
-    clone.forEach((entry) => {
-      entry.working = entry.working.map((p) => (p === swapA ? swapB : p === swapB ? swapA : p));
-      entry.off = entry.off.map((p) => (p === swapA ? swapB : p === swapB ? swapA : p));
-      if (entry.extraDuty === swapA) entry.extraDuty = swapB;
-      else if (entry.extraDuty === swapB) entry.extraDuty = swapA;
-    });
-
-    setScheduleOverride(clone);
   }
 
   function downloadExcel() {
     const rows = [
       [
         'Week',
+        'Day',
+        'Date',
         'Month',
         'Year',
-        'Day',
         'Working',
         'Off',
         'Saturday Person',
         'Monday Off',
-        'Monthly 6-Day Lead',
-        'Swap Person 1',
-        'Swap Person 2'
-      ],
-      ...displayedSchedule.map((entry) => [
-        weekLabel,
-        monthNames[selectedMonth],
-        selectedYear,
-        entry.day,
-        entry.working.join(', '),
-        entry.off.join(', '),
-        currentSaturday,
-        mondayOff,
-        entry.extraDuty || '',
-        swapA,
-        swapB
-      ])
+        'Monthly 6-Day Lead'
+      ]
     ];
+
+    fiveWeeks.forEach((week) => {
+      week.days.forEach((day) => {
+        rows.push([
+          week.label,
+          day.dayName,
+          formatDate(day.date),
+          monthNames[day.date.getMonth()],
+          day.date.getFullYear(),
+          day.working.join(', '),
+          day.off.join(', '),
+          week.saturdayPerson,
+          week.mondayOff,
+          week.monthlyLead
+        ]);
+      });
+    });
 
     const csvContent = rows
       .map((row) => row.map((cell) => escapeCsvValue(cell)).join(','))
-      .join('\\n');
+      .join('\\r\\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const safeWeek = weekLabel.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    const safeMonth = monthNames[selectedMonth].toLowerCase();
     link.href = url;
-    link.download = `rota_${safeWeek}_${safeMonth}_${selectedYear}.csv`;
+    link.download = `rota_next_5_weeks_${startDate}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -171,126 +198,117 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc', padding: '24px', fontFamily: 'Arial, sans-serif' }}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-        <h1>Rota Manager</h1>
-        <p style={{ color: '#475569' }}>
-          Saturday rotates weekly. Whoever works Saturday gets Monday off. One person is monthly 6-day lead.
+      <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
+        <h1 style={{ marginBottom: '8px' }}>Rota Manager</h1>
+        <p style={{ color: '#475569', marginBottom: '20px' }}>
+          Generates the next 5 weeks with real calendar dates. Saturday rotates weekly, and whoever works Saturday gets Monday off.
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
-          <div style={cardStyle}>
-            <h3>Controls</h3>
+        <div style={{ ...cardStyle, marginBottom: '20px' }}>
+          <h3 style={{ marginTop: 0 }}>Controls</h3>
 
-            <label style={labelStyle}>Week label</label>
-            <input style={inputStyle} value={weekLabel} onChange={(e) => setWeekLabel(e.target.value)} />
+          <label style={labelStyle}>Start Monday</label>
+          <input
+            type="date"
+            style={inputStyle}
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+          />
 
-            <label style={labelStyle}>Saturday assigned to</label>
-            <select style={inputStyle} value={currentSaturday} onChange={(e) => setCurrentSaturday(e.target.value)}>
-              {people.map((person) => (
-                <option key={person} value={person}>{person}</option>
-              ))}
-            </select>
+          <label style={labelStyle}>First Saturday assigned to</label>
+          <select
+            style={inputStyle}
+            value={firstSaturdayPerson}
+            onChange={(e) => setFirstSaturdayPerson(e.target.value)}
+          >
+            {people.map((person) => (
+              <option key={person} value={person}>{person}</option>
+            ))}
+          </select>
 
-            <label style={labelStyle}>Month</label>
-            <select style={inputStyle} value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))}>
-              {monthNames.map((month, idx) => (
-                <option key={month} value={idx}>{month}</option>
-              ))}
-            </select>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
+            <button style={buttonStyle} onClick={downloadExcel}>Download Excel</button>
+          </div>
+        </div>
 
-            <label style={labelStyle}>Year</label>
+        <div style={{ ...cardStyle, marginBottom: '20px' }}>
+          <h3 style={{ marginTop: 0 }}>Team</h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
             <input
               style={inputStyle}
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value) || new Date().getFullYear())}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Add team member"
             />
-
-            <div style={infoBoxStyle}>
-              <div><strong>Monday Off:</strong> {mondayOff}</div>
-              <div style={{ marginTop: '6px' }}><strong>Monthly 6-day lead:</strong> {monthDutyPerson}</div>
-            </div>
-
-            <label style={labelStyle}>Swap Person 1</label>
-            <select style={inputStyle} value={swapA} onChange={(e) => setSwapA(e.target.value)}>
-              <option value="">Select person</option>
-              {people.map((person) => (
-                <option key={person} value={person}>{person}</option>
-              ))}
-            </select>
-
-            <label style={labelStyle}>Swap Person 2</label>
-            <select style={inputStyle} value={swapB} onChange={(e) => setSwapB(e.target.value)}>
-              <option value="">Select person</option>
-              {people.map((person) => (
-                <option key={person} value={person}>{person}</option>
-              ))}
-            </select>
-
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
-              <button style={buttonStyle} onClick={generateNextWeek}>Generate next week</button>
-              <button style={buttonStyle} onClick={swapPeople}>Apply Swap</button>
-              <button style={buttonStyle} onClick={downloadExcel}>Download Excel</button>
-              <button style={buttonSecondary} onClick={resetWeek}>Reset</button>
-            </div>
+            <button style={buttonStyle} onClick={addPerson}>Add</button>
           </div>
 
-          <div style={cardStyle}>
-            <h3>{weekLabel} Schedule</h3>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-              {displayedSchedule.map((entry) => (
-                <div key={entry.day} style={dayCardStyle}>
-                  <div style={{ fontWeight: '700', marginBottom: '10px' }}>{entry.day}</div>
-                  <div><strong>Working:</strong> {entry.working.join(', ') || 'Nobody'}</div>
-                  <div style={{ marginTop: '8px' }}><strong>Off:</strong> {entry.off.join(', ') || 'Nobody'}</div>
-                  {entry.extraDuty ? (
-                    <div style={{ marginTop: '8px' }}><strong>Monthly lead:</strong> {entry.extraDuty}</div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-
-            <h3 style={{ marginTop: '24px' }}>Rotation History</h3>
-            <div style={{ display: 'grid', gap: '8px' }}>
-              {history.map((item, idx) => (
-                <div key={idx} style={historyItemStyle}>
-                  <strong>{item.week}</strong> — Saturday: {item.saturday}
-                </div>
-              ))}
-            </div>
-
-            <h3 style={{ marginTop: '24px' }}>Team</h3>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                style={inputStyle}
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="Add team member"
-              />
-              <button style={buttonStyle} onClick={addPerson}>Add</button>
-            </div>
-
-            <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {people.map((person) => (
-                <div key={person} style={badgeStyle}>
-                  {person}
-                  <button
-                    onClick={() => removePerson(person)}
-                    style={{
-                      marginLeft: '8px',
-                      border: 'none',
-                      background: 'transparent',
-                      cursor: 'pointer',
-                      color: '#991b1b',
-                      fontSize: '16px'
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
+          <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {people.map((person) => (
+              <div key={person} style={badgeStyle}>
+                {person}
+                <button
+                  onClick={() => removePerson(person)}
+                  style={{
+                    marginLeft: '8px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    color: '#991b1b',
+                    fontSize: '16px'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: '16px' }}>
+          {fiveWeeks.map((week) => (
+            <div key={week.label} style={cardStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>{week.label}</h3>
+                  <div style={{ color: '#475569', marginTop: '4px' }}>
+                    {formatDate(week.startDate)} to {formatDate(week.endDate)}
+                  </div>
+                </div>
+
+                <div style={{ color: '#334155' }}>
+                  <div><strong>Saturday:</strong> {week.saturdayPerson}</div>
+                  <div><strong>Monday Off:</strong> {week.mondayOff}</div>
+                  <div><strong>Monthly Lead:</strong> {week.monthlyLead}</div>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Day</th>
+                      <th style={thStyle}>Date</th>
+                      <th style={thStyle}>Working</th>
+                      <th style={thStyle}>Off</th>
+                      <th style={thStyle}>Monthly Lead</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {week.days.map((day) => (
+                      <tr key={`${week.label}-${day.dayName}`}>
+                        <td style={tdStyle}>{day.dayName}</td>
+                        <td style={tdStyle}>{formatDate(day.date)}</td>
+                        <td style={tdStyle}>{day.working.join(', ') || 'Nobody'}</td>
+                        <td style={tdStyle}>{day.off.join(', ') || 'Nobody'}</td>
+                        <td style={tdStyle}>{day.monthlyLead}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -302,29 +320,6 @@ const cardStyle = {
   border: '1px solid #e2e8f0',
   borderRadius: '16px',
   padding: '16px',
-};
-
-const dayCardStyle = {
-  border: '1px solid #cbd5e1',
-  borderRadius: '12px',
-  padding: '14px',
-  background: '#fff'
-};
-
-const historyItemStyle = {
-  border: '1px solid #cbd5e1',
-  borderRadius: '10px',
-  padding: '10px',
-  background: '#fff'
-};
-
-const infoBoxStyle = {
-  marginTop: '12px',
-  padding: '12px',
-  border: '1px solid #cbd5e1',
-  borderRadius: '10px',
-  background: '#fff',
-  marginBottom: '12px'
 };
 
 const inputStyle = {
@@ -354,15 +349,6 @@ const buttonStyle = {
   cursor: 'pointer'
 };
 
-const buttonSecondary = {
-  padding: '10px 14px',
-  borderRadius: '10px',
-  border: '1px solid #cbd5e1',
-  background: '#fff',
-  color: '#0f172a',
-  cursor: 'pointer'
-};
-
 const badgeStyle = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -370,4 +356,23 @@ const badgeStyle = {
   borderRadius: '999px',
   background: '#e2e8f0',
   fontSize: '14px'
+};
+
+const tableStyle = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  minWidth: '760px',
+};
+
+const thStyle = {
+  textAlign: 'left',
+  padding: '10px',
+  borderBottom: '1px solid #cbd5e1',
+  background: '#f8fafc',
+};
+
+const tdStyle = {
+  padding: '10px',
+  borderBottom: '1px solid #e2e8f0',
+  verticalAlign: 'top',
 };
